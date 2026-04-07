@@ -40,14 +40,33 @@ export default function AddMediaModal({ profileId, onClose }: AddMediaModalProps
         const json = await resp.json();
         results = json.data?.map((m: any) => ({ id: m.mal_id, title: m.title, image: m.images.jpg.image_url }));
       } else if (category === 'movie' || category === 'tv') {
+        const token = process.env.NEXT_PUBLIC_TMDB_TOKEN; 
+        
+        if (!token) {
+          console.error("ERRO: Variável NEXT_PUBLIC_TMDB_TOKEN não encontrada!");
+          return;
+        }
+
         const type = category === 'movie' ? 'movie' : 'tv';
-        const resp = await fetch(`https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(q)}&language=pt-BR`, {
-          headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_TMDB_TOKEN}` }
+        const urlApi = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(q)}&language=pt-BR`;
+
+        const resp = await fetch(urlApi, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token.trim()}`
+          }
         });
+
         const json = await resp.json();
-        results = json.results?.slice(0, 5).map((m: any) => ({ 
-          id: m.id, title: m.title || m.name, image: m.poster_path ? `https://image.tmdb.org/t/p/w200${m.poster_path}` : null 
-        }));
+        
+        if (json.results) {
+          results = json.results.slice(0, 5).map((m: any) => ({
+            id: m.id,
+            title: m.title || m.name,
+            image: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : null
+          }));
+        }
       }
       setSuggestions(results || []);
     } catch (err) { console.error("Busca falhou", err); }
