@@ -48,7 +48,7 @@ export default function AddMediaModal({ profileId, onClose }: AddMediaModalProps
         }
 
         const type = category === 'movie' ? 'movie' : 'tv';
-        const urlApi = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(q)}&language=pt-BR`;
+        const urlApi = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(q)}&language=en-US`;
 
         const resp = await fetch(urlApi, {
           method: 'GET',
