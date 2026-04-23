@@ -43,7 +43,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
       else setSuggestions([]);
     }, 800);
     return () => clearTimeout(delay);
-  }, [query, category]);
+  }, [query, category, selectedMedia, itemToEdit]);
 
   // --- REATIVIDADE DE TEMPORADAS ---
   useEffect(() => {
@@ -51,7 +51,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
       const id = selectedMedia?.id || itemToEdit?.medias?.external_id;
       updateMediaDetails(id, season);
     }
-  }, [season, category, selectedMedia]);
+  }, [season, category, selectedMedia, hasSeasons, itemToEdit]);
 
   async function handleSearch(q: string) {
     try {
@@ -109,11 +109,11 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     finally { setUploading(false); }
   }
 
-  // --- SALVAR (VERSÃO CORRIGIDA) ---
+  // --- SALVAR ---
   async function handleSave() {
     try {
       setLoading(true);
-      console.log("Iniciando salvamento...");
+      if (!profileId) return alert('Erro: Perfil não identificado.');
 
       const title = query.trim();
       if (!title) return alert('Informe um título.');
@@ -128,12 +128,9 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
         total_units: Number(totalUnits) || 0,
       };
 
-      // ETAPA 1: Garantir que a mídia existe na tabela 'medias'
       if (mediaId) {
-        console.log("Atualizando mídia existente:", mediaId);
         await supabase.from('medias').update(mediaPayload).eq('id', mediaId);
       } else {
-        console.log("Inserindo nova mídia...");
         const { data: createdMedia, error: mError } = await supabase
           .from('medias')
           .insert(mediaPayload)
@@ -141,22 +138,19 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
 
         if (mError) throw mError;
         mediaId = createdMedia[0].id;
-        console.log("Nova mídia criada com ID:", mediaId);
       }
 
-      // ETAPA 2: Salvar o progresso na tabela 'profile_media'
       const listPayload = {
         profile_id: profileId,
         media_id: mediaId,
         status,
         current_progress: Number(progress) || 0,
         season: Number(season) || 1,
-        rating: Number(rating) || 0,
+        // TRAVA DE SEGURANÇA: GARANTE NOTA ENTRE 0 E 5
+        rating: Math.min(Math.max(Number(rating) || 0, 0), 5),
         notes,
         is_favorite: isFavorite,
       };
-
-      console.log("Salvando na profile_media...", listPayload);
 
       const { error: lError } = itemToEdit?.id
         ? await supabase.from('profile_media').update(listPayload).eq('id', itemToEdit.id)
@@ -164,8 +158,8 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
 
       if (lError) throw lError;
 
-      console.log("Sucesso!");
       onClose();
+      window.location.reload(); 
     } catch (error: any) {
       console.error("ERRO COMPLETO:", error);
       alert('Erro ao salvar: ' + (error.message || 'Erro desconhecido'));
@@ -226,58 +220,30 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           ))}
         </div>
 
-        {/* PROGRESSO E NOTA */}
         <div className="grid grid-cols-2 gap-4">
           {!isMovie && (
             <>
               {hasSeasons && (
                 <div className="bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center">
                   <span className="text-[10px] font-black text-slate-500 uppercase mb-2">Temp</span>
-                  <input
-                    type="number"
-                    className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-full"
-                    value={season}
-                    min="1"
-                    onChange={(e) => setSeason(Number(e.target.value))}
-                  />
+                  <input type="number" className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-full" value={season} min="1" onChange={(e) => setSeason(Number(e.target.value))} />
                 </div>
               )}
-
               <div className={`bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center ${!hasSeasons ? 'col-span-1' : ''}`}>
-                <span className="text-[10px] font-black text-slate-500 uppercase mb-2">
-                  {labelProgress} Atual
-                </span>
+                <span className="text-[10px] font-black text-slate-500 uppercase mb-2">{labelProgress} Atual</span>
                 <div className="flex items-baseline justify-center gap-1">
-                  <input
-                    type="number"
-                    className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-20"
-                    value={progress}
-                    onChange={(e) => setProgress(e.target.value)}
-                  />
-                  {/* EXIBIÇÃO DO TOTAL DE EPISÓDIOS/PÁGINAS */}
-                  {totalUnits > 0 && (
-                    <span className="text-slate-600 font-bold text-sm">
-                      / {totalUnits}
-                    </span>
-                  )}
+                  <input type="number" className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-20" value={progress} onChange={(e) => setProgress(e.target.value)} />
+                  {totalUnits > 0 && <span className="text-slate-600 font-bold text-sm">/ {totalUnits}</span>}
                 </div>
               </div>
             </>
           )}
-
           <div className={`bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center ${isMovie ? 'col-span-2' : ''}`}>
-            <span className="text-[10px] font-black text-slate-500 uppercase mb-2">Nota</span>
-            <input
-              type="number"
-              step="0.1"
-              className="bg-transparent text-2xl font-black text-yellow-500 text-center outline-none w-full"
-              value={rating}
-              onChange={(e) => setRating(e.target.value)}
-            />
+            <span className="text-[10px] font-black text-slate-500 uppercase mb-2">Nota (0-5)</span>
+            <input type="number" step="0.5" min="0" max="5" className="bg-transparent text-2xl font-black text-yellow-500 text-center outline-none w-full" value={rating} onChange={(e) => setRating(e.target.value)} />
           </div>
         </div>
 
-        {/* BARRA DE PROGRESSO VISUAL (OPCIONAL, MAS FICA ÓTIMO NO DESIGN) */}
         {!isMovie && totalUnits > 0 && (
           <div className="px-2">
             <div className="flex justify-between text-[9px] font-black uppercase text-slate-500 mb-2 px-1">
@@ -285,10 +251,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
               <span>{Math.round((Number(progress) / totalUnits) * 100)}%</span>
             </div>
             <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-blue-500 transition-all duration-500"
-                style={{ width: `${Math.min((Number(progress) / totalUnits) * 100, 100)}%` }}
-              />
+              <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.min((Number(progress) / totalUnits) * 100, 100)}%` }} />
             </div>
           </div>
         )}
