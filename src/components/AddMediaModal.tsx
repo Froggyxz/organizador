@@ -6,7 +6,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
   const [query, setQuery] = useState(itemToEdit?.medias?.title || '');
   const [category, setCategory] = useState(itemToEdit?.medias?.category || 'manga');
   const [suggestions, setSuggestions] = useState([]);
-  const [selectedMedia, setSelectedMedia] = useState<any>(null);
+  const [selectedMedia, setSelectedMedia] = useState<any>(itemToEdit?.medias?.external_id ? { id: itemToEdit.medias.external_id } : null);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [status, setStatus] = useState(itemToEdit?.status || 'Planejado');
@@ -19,11 +19,13 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
   const [imageUrl, setImageUrl] = useState(itemToEdit?.medias?.image_url || '');
 
   const [loading, setLoading] = useState(false);
+  const [isAiring, setIsAiring] = useState(false);
 
   const isVideo = ['anime', 'movie', 'tv'].includes(category);
   const hasSeasons = ['tv', 'anime'].includes(category);
   const labelProgress = category === 'manga' ? 'Cap' : category === 'book' ? 'Pág' : 'Ep';
 
+  // Sincronização de busca
   useEffect(() => {
     const delay = setTimeout(() => {
       if (query.length > 2 && !selectedMedia && category !== 'fanfic' && !itemToEdit) handleSearch(query);
@@ -32,24 +34,32 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     return () => clearTimeout(delay);
   }, [query, category]);
 
+  // Reatividade para Temporadas e Lançamentos (Anime e TV)
+  useEffect(() => {
+    if (hasSeasons && selectedMedia?.id) {
+      updateMediaDetails(selectedMedia.id, season);
+    }
+  }, [season, category]);
+
   async function handleSearch(q: string) {
     try {
       let results = [];
       const token = process.env.NEXT_PUBLIC_TMDB_TOKEN;
+      
       if (category === 'book') {
         const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5`);
         const json = await resp.json();
         results = json.items?.map((m: any) => ({
           id: m.id, title: m.volumeInfo.title, image: m.volumeInfo.imageLinks?.thumbnail?.replace('http:', 'https:'), total: m.volumeInfo.pageCount || 0
         }));
-      } else if (category === 'movie' || category === 'tv') {
+      } else {
         const type = category === 'movie' ? 'movie' : 'tv';
         const resp = await fetch(`https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(q)}&language=pt-BR`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         const json = await resp.json();
         results = json.results?.slice(0, 5).map((m: any) => ({
-          id: m.id, title: m.title || m.name, image: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : null, total: category === 'movie' ? 1 : 0
+          id: m.id, title: m.title || m.name, image: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : null
         }));
       }
       setSuggestions(results || []);
@@ -57,23 +67,44 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     } catch (err) { console.error(err); }
   }
 
+  async function updateMediaDetails(externalId: string | number, seasonNum: number) {
+    try {
+      const token = process.env.NEXT_PUBLIC_TMDB_TOKEN;
+      
+      // Verifica status da obra (se está em lançamento)
+      const seriesResp = await fetch(`https://api.themoviedb.org/3/tv/${externalId}?language=pt-BR`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const seriesData = await seriesResp.json();
+      const airing = seriesData.status === 'Returning Series' || seriesData.status === 'In Production';
+      setIsAiring(airing);
+
+      // Busca episódios da temporada selecionada
+      const seasonResp = await fetch(`https://api.themoviedb.org/3/tv/${externalId}/season/${seasonNum}?language=pt-BR`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const seasonData = await seasonResp.json();
+
+      if (seasonData.episodes) {
+        const today = new Date();
+        // Se estiver lançando, filtra apenas episódios com air_date no passado/hoje
+        const airedEpisodes = seasonData.episodes.filter((ep: any) => !ep.air_date || new Date(ep.air_date) <= today);
+        setTotalUnits(airing ? airedEpisodes.length : seasonData.episodes.length);
+      }
+    } catch (e) { console.error("Erro ao atualizar unidades:", e); }
+  }
+
   async function handleSelectSuggestion(s: any) {
     setQuery(s.title);
     setImageUrl(s.image);
     setShowSuggestions(false);
-    if (category === 'tv') {
-      try {
-        const token = process.env.NEXT_PUBLIC_TMDB_TOKEN;
-        const resp = await fetch(`https://api.themoviedb.org/3/tv/${s.id}?language=pt-BR`, { headers: { Authorization: `Bearer ${token}` } });
-        const details = await resp.json();
-        const firstSeason = details.seasons?.find((sea: any) => sea.season_number === 1);
-        setTotalUnits(firstSeason?.episode_count || 0);
-        setSeason(1);
-        setSelectedMedia({ ...s, all_seasons: details.seasons });
-      } catch (e) { setSelectedMedia(s); }
+    setSelectedMedia(s);
+
+    if (hasSeasons) {
+      setSeason(1);
+      updateMediaDetails(s.id, 1);
     } else {
-      setTotalUnits(s.total);
-      setSelectedMedia(s);
+      setTotalUnits(s.total || 0);
     }
   }
 
@@ -84,36 +115,44 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
       let mediaId = itemToEdit?.media_id;
       if (!itemToEdit) {
         const { data: media } = await supabase.from('medias').insert([{
-          title: selectedMedia ? selectedMedia.title : query,
-          category, image_url: selectedMedia ? selectedMedia.image : imageUrl, total_units: totalUnits, is_custom: !selectedMedia
+          title: selectedMedia?.title || query,
+          category, image_url: selectedMedia?.image || imageUrl, 
+          total_units: totalUnits, is_custom: !selectedMedia,
+          external_id: selectedMedia?.id?.toString()
         }]).select().single();
         mediaId = media.id;
       }
       const logData = { profile_id: profileId, media_id: mediaId, status, current_progress: Number(progress), rating: Number(rating), season: Number(season), notes, is_favorite: isFavorite };
+      
       if (itemToEdit) await supabase.from('user_logs').update(logData).eq('id', itemToEdit.id);
       else await supabase.from('user_logs').insert([logData]);
+      
       onClose();
     } catch (e) { console.error(e); }
     setLoading(false);
   }
 
   return (
-    <div className="fixed inset-0 bg-slate-950/90 z-[100] flex flex-col justify-end backdrop-blur-sm">
-      {/* Botão de Fechar/Swipe Indicator */}
+    <div className="fixed inset-0 bg-slate-950/90 z-[100] flex flex-col justify-end backdrop-blur-md">
       <div className="w-12 h-1.5 bg-slate-800 rounded-full mx-auto mb-4" onClick={onClose} />
       
-      <div className="bg-slate-900 w-full rounded-t-[3rem] p-8 pb-12 space-y-6 max-h-[92vh] overflow-y-auto no-scrollbar shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border-t border-slate-800 relative">
+      <div className="bg-slate-900 w-full rounded-t-[3rem] p-8 pb-12 space-y-6 max-h-[94vh] overflow-y-auto no-scrollbar shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border-t border-slate-800 relative">
         
         {/* HEADER */}
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-2xl font-black tracking-tight text-white">{itemToEdit ? 'Editar Obra' : 'Nova Obra'}</h2>
-            <p className="text-blue-500 text-[10px] font-black uppercase tracking-[0.2em]">{category}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-blue-500 text-[10px] font-black uppercase tracking-widest">{category}</span>
+              {isAiring && (
+                <span className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[9px] font-black uppercase rounded-full">
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                  Em Lançamento
+                </span>
+              )}
+            </div>
           </div>
-          <button 
-            onClick={() => setIsFavorite(!isFavorite)} 
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isFavorite ? 'bg-red-500/10 text-red-500' : 'bg-slate-800 text-slate-500'}`}
-          >
+          <button onClick={() => setIsFavorite(!isFavorite)} className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isFavorite ? 'bg-red-500/10 text-red-500' : 'bg-slate-800 text-slate-500'}`}>
             {isFavorite ? '❤️' : '🤍'}
           </button>
         </div>
@@ -121,42 +160,25 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
         {/* SELETOR DE CATEGORIA */}
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
           {['book', 'manga', 'anime', 'movie', 'tv', 'fanfic'].map(cat => (
-            <button 
-              key={cat} 
-              onClick={() => setCategory(cat)} 
-              className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border whitespace-nowrap ${category === cat ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
-            >
+            <button key={cat} onClick={() => { setCategory(cat); setSelectedMedia(null); }} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border whitespace-nowrap ${category === cat ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>
               {cat}
             </button>
           ))}
         </div>
 
-        {/* BUSCA COM DROPDOWN FLUTUANTE (CORRIGIDO) */}
+        {/* BUSCA COM DROPDOWN */}
         <div className="relative z-[110]">
-          <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 mb-2 block">Nome da Obra</label>
-          <input 
-            className="w-full bg-slate-800/50 p-5 rounded-2xl outline-none border border-slate-800 focus:border-blue-500/50 transition-all font-bold text-white placeholder:text-slate-600" 
-            placeholder="Pesquisar título..." 
-            value={query} 
-            onChange={(e) => { setQuery(e.target.value); setSelectedMedia(null); }} 
-          />
-
+          <input className="w-full bg-slate-800/50 p-5 rounded-2xl outline-none border border-slate-800 focus:border-blue-500/50 transition-all font-bold text-white placeholder:text-slate-600" placeholder="Pesquisar título..." value={query} onChange={(e) => { setQuery(e.target.value); setSelectedMedia(null); }} />
           {showSuggestions && suggestions.length > 0 && (
             <>
-              {/* Overlay invisível para fechar ao clicar fora */}
               <div className="fixed inset-0 z-[-1]" onClick={() => setShowSuggestions(false)} />
-              
-              <div className="absolute top-[110%] left-0 w-full bg-slate-800/95 backdrop-blur-xl rounded-[2rem] overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.4)] border border-white/5 animate-in fade-in zoom-in-95 duration-200 max-h-64 overflow-y-auto no-scrollbar">
+              <div className="absolute top-[110%] left-0 w-full bg-slate-800/95 backdrop-blur-xl rounded-[2rem] overflow-hidden shadow-2xl border border-white/5 animate-in fade-in zoom-in-95 duration-200 max-h-64 overflow-y-auto no-scrollbar">
                 {suggestions.map((s: any) => (
-                  <button 
-                    key={s.id} 
-                    onClick={() => handleSelectSuggestion(s)} 
-                    className="w-full p-4 flex items-center gap-4 hover:bg-blue-600/20 active:bg-blue-600/40 border-b border-white/5 last:border-0 transition-colors text-left"
-                  >
+                  <button key={s.id} onClick={() => handleSelectSuggestion(s)} className="w-full p-4 flex items-center gap-4 hover:bg-blue-600/20 active:bg-blue-600/40 border-b border-white/5 last:border-0 text-left transition-colors">
                     <img src={s.image || 'https://via.placeholder.com/40x60'} className="w-12 h-16 object-cover rounded-xl shadow-md border border-white/10" alt="" />
                     <div className="flex flex-col overflow-hidden">
                       <span className="text-sm font-bold truncate text-slate-100">{s.title}</span>
-                      <span className="text-[10px] font-medium text-slate-500 uppercase tracking-tight">Ver detalhes</span>
+                      <span className="text-[9px] font-black text-blue-500 uppercase mt-1">Selecionar</span>
                     </div>
                   </button>
                 ))}
@@ -165,91 +187,50 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           )}
         </div>
 
-        {/* STATUS SELECTOR */}
+        {/* STATUS */}
         <div className="grid grid-cols-3 gap-2">
           {['Planejado', isVideo ? 'Assistindo' : 'Lendo', 'Concluído'].map(s => (
-            <button 
-              key={s} 
-              onClick={() => setStatus(s)} 
-              className={`p-3 rounded-2xl text-[9px] font-black uppercase text-center border transition-all ${status === s ? 'bg-slate-100 border-white text-slate-950' : 'bg-slate-800/40 border-slate-800 text-slate-500'}`}
-            >
+            <button key={s} onClick={() => setStatus(s)} className={`p-3 rounded-2xl text-[9px] font-black uppercase text-center border transition-all ${status === s ? 'bg-slate-100 border-white text-slate-950' : 'bg-slate-800/40 border-slate-800 text-slate-500'}`}>
               {s}
             </button>
           ))}
         </div>
 
-        {/* PROGRESSO E TEMPORADA */}
+        {/* PROGRESSO DINÂMICO */}
         <div className="grid grid-cols-2 gap-4">
           {hasSeasons && (
             <div className="bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center">
               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Temporada</span>
-              <input 
-                type="number" 
-                className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-full" 
-                value={season} 
-                onChange={(e) => setSeason(Number(e.target.value))} 
-              />
+              <input type="number" className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-full" value={season} min="1" onChange={(e) => setSeason(Number(e.target.value))} />
             </div>
           )}
           <div className={`bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center ${!hasSeasons ? 'col-span-2' : ''}`}>
             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">{labelProgress} Atual / Total</span>
             <div className="flex items-baseline gap-1">
-              <input 
-                type="number" 
-                className="bg-transparent text-2xl font-black text-blue-400 text-right outline-none w-16" 
-                value={progress} 
-                onChange={(e) => setProgress(e.target.value)} 
-              />
+              <input type="number" className="bg-transparent text-2xl font-black text-blue-400 text-right outline-none w-16" value={progress} onChange={(e) => setProgress(e.target.value)} />
               <span className="text-slate-600 font-bold">/</span>
-              <input 
-                type="number" 
-                className="bg-transparent text-sm font-bold text-slate-500 outline-none w-12" 
-                value={totalUnits} 
-                onChange={(e) => setTotalUnits(Number(e.target.value))} 
-              />
+              <input type="number" className="bg-transparent text-sm font-bold text-slate-500 outline-none w-12" value={totalUnits} onChange={(e) => setTotalUnits(Number(e.target.value))} />
             </div>
           </div>
         </div>
 
-        {/* NOTA DECIMAL */}
+        {/* NOTA */}
         <div className="bg-blue-600/5 border border-blue-500/10 p-5 rounded-[2rem] flex justify-between items-center">
-          <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Sua Nota (0.0 a 5.0)</span>
-          <div className="flex items-center gap-3">
+          <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Sua Nota</span>
+          <div className="flex items-center gap-3 bg-slate-800 p-2 rounded-xl border border-slate-700">
             <span className="text-yellow-500 text-xl font-bold">★</span>
-            <input 
-              type="number" 
-              step="0.1" 
-              min="0" 
-              max="5" 
-              className="bg-slate-800 p-3 w-20 rounded-xl text-center font-black text-yellow-500 outline-none border border-slate-700" 
-              value={rating} 
-              onChange={(e) => setRating(e.target.value)} 
-            />
+            <input type="number" step="0.1" min="0" max="5" className="bg-transparent w-16 text-center font-black text-yellow-500 outline-none" value={rating} onChange={(e) => setRating(e.target.value)} />
           </div>
         </div>
 
         {/* ANOTAÇÕES */}
-        <textarea 
-          className="w-full bg-slate-800/30 p-6 rounded-[2rem] text-sm text-slate-200 outline-none border border-slate-800/50 focus:border-blue-500/30 h-28 resize-none font-medium placeholder:text-slate-700" 
-          placeholder="O que está achando da obra?" 
-          value={notes} 
-          onChange={(e) => setNotes(e.target.value)} 
-        />
+        <textarea className="w-full bg-slate-800/30 p-6 rounded-[2rem] text-sm text-slate-200 outline-none border border-slate-800/50 h-28 resize-none font-medium placeholder:text-slate-700" placeholder="Escreva suas impressões..." value={notes} onChange={(e) => setNotes(e.target.value)} />
 
-        {/* BOTÕES DE AÇÃO */}
+        {/* AÇÕES */}
         <div className="flex gap-3">
-          <button 
-            onClick={onClose} 
-            className="flex-1 p-5 rounded-2xl font-black uppercase text-[11px] text-slate-500 bg-slate-800/50 active:scale-95 transition-transform"
-          >
-            Voltar
-          </button>
-          <button 
-            onClick={handleSave} 
-            disabled={loading} 
-            className="flex-[2] p-5 rounded-2xl font-black uppercase text-[11px] bg-blue-600 text-white shadow-[0_10px_20px_rgba(37,99,235,0.3)] active:scale-95 transition-transform disabled:opacity-50"
-          >
-            {loading ? 'Processando...' : itemToEdit ? 'Atualizar' : 'Salvar na Lista'}
+          <button onClick={onClose} className="flex-1 p-5 rounded-2xl font-black uppercase text-[11px] text-slate-500 bg-slate-800/50 active:scale-95 transition-transform">Voltar</button>
+          <button onClick={handleSave} disabled={loading} className="flex-[2] p-5 rounded-2xl font-black uppercase text-[11px] bg-blue-600 text-white shadow-lg active:scale-95 transition-transform disabled:opacity-50">
+            {loading ? 'Sincronizando...' : itemToEdit ? 'Atualizar' : 'Salvar na Lista'}
           </button>
         </div>
       </div>
