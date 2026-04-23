@@ -193,6 +193,17 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           </div>
         </div>
 
+        {/* BOX DE ANOTAÇÕES - VOLTOU! */}
+        <div className="space-y-2">
+          <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-2">Anotações</span>
+          <textarea 
+            className="w-full bg-slate-800/30 p-4 rounded-2xl text-sm text-slate-200 outline-none border border-slate-800/50 h-24 resize-none font-medium placeholder:text-slate-700 focus:border-blue-500/30 transition-all" 
+            placeholder="O que você achou dessa obra?" 
+            value={notes} 
+            onChange={(e) => setNotes(e.target.value)} 
+          />
+        </div>
+
         <button onClick={handleSave} disabled={loading || uploading} className="w-full p-6 rounded-3xl font-black uppercase text-[12px] bg-blue-600 text-white active:scale-95 transition-all disabled:opacity-50">
           {loading ? 'Salvando...' : 'Salvar'}
         </button>
