@@ -127,89 +127,89 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
       setUploading(false);
     }
   }
+async function handleSave() {
+  try {
+    setLoading(true);
+    console.log("--- INICIANDO PERSISTÊNCIA ---");
 
-  async function handleSave() {
-    try {
-      setLoading(true);
-      console.log("--- INICIANDO TRANSAÇÃO TRIPLA ---");
+    const title = query.trim();
+    if (!title) return alert('Informe um título.');
 
-      const title = query.trim();
-      if (!title) return alert('Informe um título.');
+    // 1. TABELA: medias
+    let mediaId = itemToEdit?.media_id ?? itemToEdit?.medias?.id ?? null;
+    
+    const mediaPayload = {
+      title,
+      category,
+      image_url: imageUrl || null,
+      external_id: selectedMedia?.id?.toString() || null,
+      total_units: Number(totalUnits) || 0,
+    };
 
-      // 1. SALVAR NA TABELA 'medias'
-      let mediaId = itemToEdit?.media_id ?? itemToEdit?.medias?.id ?? null;
-      const mediaPayload = {
-        title,
-        category,
-        image_url: imageUrl || null,
-        external_id: selectedMedia?.id?.toString() || null,
-        total_units: Number(totalUnits) || 0,
-      };
-
-      if (!mediaId) {
-        console.log("Criando mídia...");
-        const { data: mData, error: mError } = await supabase
-          .from('medias')
-          .insert(mediaPayload)
-          .select('id')
-          .single();
-        if (mError) throw mError;
-        mediaId = mData.id;
-      } else {
-        console.log("Atualizando mídia...");
-        await supabase.from('medias').update(mediaPayload).eq('id', mediaId);
-      }
-
-      // 2. SALVAR NA TABELA 'profile_media' (O vínculo)
-      const listPayload = {
-        profile_id: profileId,
-        media_id: mediaId,
-        status,
-        current_progress: Number(progress) || 0,
-        season: Number(season) || 1,
-        rating: Math.min(Math.max(Number(rating) || 0, 0), 5),
-        notes,
-        is_favorite: isFavorite,
-      };
-
-      console.log("Salvando vínculo profile_media...");
-      const { data: pMediaData, error: lError } = itemToEdit?.id
-        ? await supabase.from('profile_media').update(listPayload).eq('id', itemToEdit.id).select().single()
-        : await supabase.from('profile_media').insert(listPayload).select().single();
-
-      if (lError) throw lError;
-
-      // 3. SALVAR NA TABELA 'userlogs' (O log de atividade)
-      // Aqui registramos a ação que acabou de acontecer
-      const logPayload = {
-        profile_id: profileId,
-        media_id: mediaId,
-        action: itemToEdit ? 'UPDATE' : 'INSERT',
-        details: `Progresso: ${progress}, Status: ${status}, Nota: ${rating}`,
-        created_at: new Date().toISOString()
-      };
-
-      console.log("Enviando para userlogs...");
-      const { error: logError } = await supabase
-        .from('userlogs')
-        .insert(logPayload);
-
-      if (logError) {
-        console.warn("Erro ao salvar log, mas os dados principais foram salvos:", logError);
-        // Não damos throw aqui para não travar o app por causa de um log
-      }
-
-      console.log("--- TUDO SALVO COM SUCESSO ---");
-      onClose();
-      window.location.reload();
-
-    } catch (error: any) {
-      console.error("ERRO CRÍTICO:", error);
-      alert(`Erro no processo: ${error.message}`);
-    } finally {
-      setLoading(false);
+    if (!mediaId) {
+      console.log("Inserindo em medias...");
+      const { data: mData, error: mError } = await supabase
+        .from('medias')
+        .insert(mediaPayload)
+        .select('id')
+        .single();
+      
+      if (mError) throw mError;
+      mediaId = mData.id;
+    } else {
+      console.log("Atualizando medias...");
+      const { error: mUpError } = await supabase.from('medias').update(mediaPayload).eq('id', mediaId);
+      if (mUpError) throw mUpError;
     }
+
+    // 2. TABELA: profile_media (Estado Atual)
+    const commonData = {
+      profile_id: profileId,
+      media_id: mediaId,
+      status,
+      current_progress: Number(progress) || 0,
+      season: Number(season) || 1,
+      rating: Math.min(Math.max(Number(rating) || 0, 0), 5), // Escala 5
+      notes,
+      is_favorite: isFavorite,
+      updated_at: new Date().toISOString(),
+    };
+
+    console.log("Salvando em profile_media...");
+    const { error: pmError } = itemToEdit?.id
+      ? await supabase.from('profile_media').update(commonData).eq('id', itemToEdit.id)
+      : await supabase.from('profile_media').insert(commonData);
+
+    if (pmError) throw pmError;
+
+    // 3. TABELA: user_logs (Histórico/Logs)
+    // Nota: Seguindo seu SQL, user_logs tem a coluna 'total_progress'
+    const logPayload = {
+      ...commonData,
+      total_progress: Number(totalUnits) || 0,
+    };
+
+    console.log("Inserindo em user_logs...");
+    const { error: logError } = await supabase
+      .from('user_logs')
+      .insert(logPayload);
+
+    if (logError) {
+      console.error("Erro no user_logs:", logError);
+      // Não travamos o fluxo se apenas o log falhar, mas avisamos no console
+    }
+
+    console.log("--- SUCESSO TOTAL ---");
+    onClose();
+    window.location.reload();
+
+  } catch (error: any) {
+    console.error("FALHA NO PROCESSO:", error);
+    alert(`Erro ao salvar: ${error.message || 'Verifique o console'}`);
+  } finally {
+    setLoading(false);
   }
+}
 return (
   <div className="fixed inset-0 bg-slate-950/90 z-[100] flex flex-col justify-end backdrop-blur-md" onClick={handleOutsideClick}>
     <div className="w-12 h-1.5 bg-slate-800 rounded-full mx-auto mb-4" />
