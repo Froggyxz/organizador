@@ -98,16 +98,16 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
   }
 
   return (
-    <div className="fixed inset-0 bg-slate-950/95 z-[100] flex flex-col justify-end">
-      {/* Botão de Fechar no topo para facilitar o swipe down visual */}
+    <div className="fixed inset-0 bg-slate-950/90 z-[100] flex flex-col justify-end backdrop-blur-sm">
+      {/* Botão de Fechar/Swipe Indicator */}
       <div className="w-12 h-1.5 bg-slate-800 rounded-full mx-auto mb-4" onClick={onClose} />
       
-      <div className="bg-slate-900 w-full rounded-t-[3rem] p-8 pb-12 space-y-6 max-h-[90vh] overflow-y-auto no-scrollbar shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border-t border-slate-800">
+      <div className="bg-slate-900 w-full rounded-t-[3rem] p-8 pb-12 space-y-6 max-h-[92vh] overflow-y-auto no-scrollbar shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border-t border-slate-800 relative">
         
-        {/* HEADER E FAVORITO */}
+        {/* HEADER */}
         <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-2xl font-black tracking-tight">{itemToEdit ? 'Editar Obra' : 'Nova Obra'}</h2>
+            <h2 className="text-2xl font-black tracking-tight text-white">{itemToEdit ? 'Editar Obra' : 'Nova Obra'}</h2>
             <p className="text-blue-500 text-[10px] font-black uppercase tracking-[0.2em]">{category}</p>
           </div>
           <button 
@@ -118,45 +118,59 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           </button>
         </div>
 
-        {/* BUSCA E CATEGORIA */}
-        <div className="space-y-3">
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-            {['book', 'manga', 'anime', 'movie', 'tv', 'fanfic'].map(cat => (
-              <button 
-                key={cat} 
-                onClick={() => setCategory(cat)}
-                className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${category === cat ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-          <div className="relative">
-            <input 
-              className="w-full bg-slate-800/50 p-5 rounded-2xl outline-none border border-slate-800 focus:border-blue-500/50 transition-all font-bold placeholder:text-slate-600" 
-              placeholder="Digite o nome..." 
-              value={query} 
-              onChange={(e) => { setQuery(e.target.value); setSelectedMedia(null); }} 
-            />
-            {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute bottom-full left-0 w-full bg-slate-800 rounded-3xl mb-2 overflow-hidden shadow-2xl border border-slate-700 animate-in fade-in slide-in-from-bottom-2">
+        {/* SELETOR DE CATEGORIA */}
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+          {['book', 'manga', 'anime', 'movie', 'tv', 'fanfic'].map(cat => (
+            <button 
+              key={cat} 
+              onClick={() => setCategory(cat)} 
+              className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border whitespace-nowrap ${category === cat ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
+        {/* BUSCA COM DROPDOWN FLUTUANTE (CORRIGIDO) */}
+        <div className="relative z-[110]">
+          <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-2 mb-2 block">Nome da Obra</label>
+          <input 
+            className="w-full bg-slate-800/50 p-5 rounded-2xl outline-none border border-slate-800 focus:border-blue-500/50 transition-all font-bold text-white placeholder:text-slate-600" 
+            placeholder="Pesquisar título..." 
+            value={query} 
+            onChange={(e) => { setQuery(e.target.value); setSelectedMedia(null); }} 
+          />
+
+          {showSuggestions && suggestions.length > 0 && (
+            <>
+              {/* Overlay invisível para fechar ao clicar fora */}
+              <div className="fixed inset-0 z-[-1]" onClick={() => setShowSuggestions(false)} />
+              
+              <div className="absolute top-[110%] left-0 w-full bg-slate-800/95 backdrop-blur-xl rounded-[2rem] overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.4)] border border-white/5 animate-in fade-in zoom-in-95 duration-200 max-h-64 overflow-y-auto no-scrollbar">
                 {suggestions.map((s: any) => (
-                  <button key={s.id} onClick={() => handleSelectSuggestion(s)} className="w-full p-4 flex items-center gap-4 hover:bg-slate-700 active:bg-slate-600 border-b border-slate-700/50 last:border-0">
-                    <img src={s.image || 'https://via.placeholder.com/40x60'} className="w-12 h-16 object-cover rounded-xl shadow-lg" />
-                    <span className="text-sm font-bold truncate">{s.title}</span>
+                  <button 
+                    key={s.id} 
+                    onClick={() => handleSelectSuggestion(s)} 
+                    className="w-full p-4 flex items-center gap-4 hover:bg-blue-600/20 active:bg-blue-600/40 border-b border-white/5 last:border-0 transition-colors text-left"
+                  >
+                    <img src={s.image || 'https://via.placeholder.com/40x60'} className="w-12 h-16 object-cover rounded-xl shadow-md border border-white/10" alt="" />
+                    <div className="flex flex-col overflow-hidden">
+                      <span className="text-sm font-bold truncate text-slate-100">{s.title}</span>
+                      <span className="text-[10px] font-medium text-slate-500 uppercase tracking-tight">Ver detalhes</span>
+                    </div>
                   </button>
                 ))}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
-        {/* STATUS SELECTOR (Cards horizontais) */}
+        {/* STATUS SELECTOR */}
         <div className="grid grid-cols-3 gap-2">
           {['Planejado', isVideo ? 'Assistindo' : 'Lendo', 'Concluído'].map(s => (
             <button 
               key={s} 
-              onClick={() => setStatus(s)}
+              onClick={() => setStatus(s)} 
               className={`p-3 rounded-2xl text-[9px] font-black uppercase text-center border transition-all ${status === s ? 'bg-slate-100 border-white text-slate-950' : 'bg-slate-800/40 border-slate-800 text-slate-500'}`}
             >
               {s}
@@ -164,7 +178,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           ))}
         </div>
 
-        {/* GRID DE PROGRESSO E TEMPORADA */}
+        {/* PROGRESSO E TEMPORADA */}
         <div className="grid grid-cols-2 gap-4">
           {hasSeasons && (
             <div className="bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center">
@@ -197,35 +211,43 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           </div>
         </div>
 
-        {/* NOTA E COMENTÁRIO */}
-        <div className="space-y-4">
-          <div className="bg-blue-600/5 border border-blue-500/10 p-5 rounded-[2rem] flex justify-between items-center">
-            <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Sua Nota</span>
-            <div className="flex items-center gap-3">
-              <span className="text-yellow-500 text-xl font-bold">★</span>
-              <input 
-                type="number" step="0.1" max="5" 
-                className="bg-slate-800 p-3 w-16 rounded-xl text-center font-black text-yellow-500 outline-none border border-slate-700" 
-                value={rating} onChange={(e) => setRating(e.target.value)} 
-              />
-            </div>
+        {/* NOTA DECIMAL */}
+        <div className="bg-blue-600/5 border border-blue-500/10 p-5 rounded-[2rem] flex justify-between items-center">
+          <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Sua Nota (0.0 a 5.0)</span>
+          <div className="flex items-center gap-3">
+            <span className="text-yellow-500 text-xl font-bold">★</span>
+            <input 
+              type="number" 
+              step="0.1" 
+              min="0" 
+              max="5" 
+              className="bg-slate-800 p-3 w-20 rounded-xl text-center font-black text-yellow-500 outline-none border border-slate-700" 
+              value={rating} 
+              onChange={(e) => setRating(e.target.value)} 
+            />
           </div>
-          
-          <textarea 
-            className="w-full bg-slate-800/30 p-6 rounded-[2rem] text-sm outline-none border border-slate-800/50 focus:border-blue-500/30 h-28 resize-none font-medium placeholder:text-slate-700" 
-            placeholder="Escreva algo sobre..." 
-            value={notes} 
-            onChange={(e) => setNotes(e.target.value)} 
-          />
         </div>
 
-        {/* ACTIONS */}
+        {/* ANOTAÇÕES */}
+        <textarea 
+          className="w-full bg-slate-800/30 p-6 rounded-[2rem] text-sm text-slate-200 outline-none border border-slate-800/50 focus:border-blue-500/30 h-28 resize-none font-medium placeholder:text-slate-700" 
+          placeholder="O que está achando da obra?" 
+          value={notes} 
+          onChange={(e) => setNotes(e.target.value)} 
+        />
+
+        {/* BOTÕES DE AÇÃO */}
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 p-5 rounded-2xl font-black uppercase text-[11px] text-slate-500 bg-slate-800/50 transition-active active:scale-95">Voltar</button>
+          <button 
+            onClick={onClose} 
+            className="flex-1 p-5 rounded-2xl font-black uppercase text-[11px] text-slate-500 bg-slate-800/50 active:scale-95 transition-transform"
+          >
+            Voltar
+          </button>
           <button 
             onClick={handleSave} 
             disabled={loading} 
-            className="flex-[2] p-5 rounded-2xl font-black uppercase text-[11px] bg-blue-600 text-white shadow-[0_10px_20px_rgba(37,99,235,0.3)] transition-active active:scale-95 disabled:opacity-50"
+            className="flex-[2] p-5 rounded-2xl font-black uppercase text-[11px] bg-blue-600 text-white shadow-[0_10px_20px_rgba(37,99,235,0.3)] active:scale-95 transition-transform disabled:opacity-50"
           >
             {loading ? 'Processando...' : itemToEdit ? 'Atualizar' : 'Salvar na Lista'}
           </button>
