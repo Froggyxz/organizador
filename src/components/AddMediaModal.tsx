@@ -98,26 +98,50 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     try {
       if (!e.target.files || e.target.files.length === 0) return;
       setUploading(true);
+
       const file = e.target.files[0];
-      const fileName = `${Date.now()}.${file.name.split('.').pop()}`;
-      const { error: uploadError } = await supabase.storage.from('media-covers').upload(fileName, file);
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      console.log("Iniciando upload de imagem...");
+
+      const { error: uploadError } = await supabase.storage
+        .from('media-covers')
+        .upload(filePath, file);
+
       if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from('media-covers').getPublicUrl(fileName);
+
+      const { data } = supabase.storage
+        .from('media-covers')
+        .getPublicUrl(filePath);
+
       setImageUrl(data.publicUrl);
-      setSelectedMedia(null);
-    } catch (error: any) { alert('Erro no upload: ' + error.message); }
-    finally { setUploading(false); }
+      setSelectedMedia(null); // Remove vínculo com API externa se usuário subiu foto própria
+      console.log("Upload concluído! URL:", data.publicUrl);
+
+    } catch (error: any) {
+      console.error("Erro no upload:", error);
+      alert('Erro no upload: ' + error.message);
+    } finally {
+      setUploading(false);
+    }
   }
 
-  // --- SALVAR ---
   async function handleSave() {
     try {
       setLoading(true);
-      if (!profileId) return alert('Erro: Perfil não identificado.');
+      console.log("--- INICIANDO PROCESSO DE SALVAMENTO ---");
+
+      // 1. Validação de segurança
+      if (!profileId) {
+        throw new Error("ID do perfil não encontrado. Verifique se você está logado.");
+      }
 
       const title = query.trim();
-      if (!title) return alert('Informe um título.');
+      if (!title) return alert('Informe um título para a obra.');
 
+      // 2. Definir se vamos criar ou editar na tabela 'medias'
       let mediaId = itemToEdit?.media_id ?? itemToEdit?.medias?.id ?? null;
 
       const mediaPayload = {
@@ -129,45 +153,68 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
       };
 
       if (mediaId) {
-        await supabase.from('medias').update(mediaPayload).eq('id', mediaId);
+        console.log("Atualizando mídia existente (ID:", mediaId, ")...");
+        const { error: mUpError } = await supabase
+          .from('medias')
+          .update(mediaPayload)
+          .eq('id', mediaId);
+
+        if (mUpError) throw mUpError;
       } else {
+        console.log("Inserindo nova mídia no banco...");
         const { data: createdMedia, error: mError } = await supabase
           .from('medias')
           .insert(mediaPayload)
-          .select('id');
+          .select(); // Buscamos o objeto completo para pegar o ID gerado
 
         if (mError) throw mError;
+        if (!createdMedia || createdMedia.length === 0) {
+          throw new Error("Mídia criada, mas o banco não retornou o ID. Verifique o RLS da tabela 'medias'.");
+        }
+
         mediaId = createdMedia[0].id;
+        console.log("Novo MediaID criado:", mediaId);
       }
 
+      // 3. Salvar na tabela de relacionamento 'profile_media'
       const listPayload = {
         profile_id: profileId,
         media_id: mediaId,
         status,
         current_progress: Number(progress) || 0,
         season: Number(season) || 1,
-        // TRAVA DE SEGURANÇA: GARANTE NOTA ENTRE 0 E 5
+        // Garante que a nota enviada esteja sempre entre 0 e 5
         rating: Math.min(Math.max(Number(rating) || 0, 0), 5),
-        notes,
+        notes: notes || '',
         is_favorite: isFavorite,
       };
+
+      console.log("Salvando progresso do usuário...", listPayload);
 
       const { error: lError } = itemToEdit?.id
         ? await supabase.from('profile_media').update(listPayload).eq('id', itemToEdit.id)
         : await supabase.from('profile_media').insert(listPayload);
 
-      if (lError) throw lError;
+      if (lError) {
+        console.error("Erro na tabela profile_media:", lError);
+        throw lError;
+      }
+
+      console.log("--- SALVO COM SUCESSO ---");
 
       onClose();
-      window.location.reload(); 
+      // Recarrega para refletir as mudanças na UI
+      window.location.reload();
+
     } catch (error: any) {
-      console.error("ERRO COMPLETO:", error);
-      alert('Erro ao salvar: ' + (error.message || 'Erro desconhecido'));
+      console.error("ERRO COMPLETO NO PROCESSO:", error);
+      // O código do erro ajuda a identificar se é permissão (RLS) ou erro de banco
+      const errorMsg = error.code ? `Erro ${error.code}: ${error.message}` : error.message;
+      alert('Erro ao salvar: ' + errorMsg);
     } finally {
       setLoading(false);
     }
   }
-
   return (
     <div className="fixed inset-0 bg-slate-950/90 z-[100] flex flex-col justify-end backdrop-blur-md" onClick={handleOutsideClick}>
       <div className="w-12 h-1.5 bg-slate-800 rounded-full mx-auto mb-4" />
