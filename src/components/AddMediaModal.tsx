@@ -128,93 +128,66 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     }
   }
 
-  async function handleSave() {
-    try {
-      setLoading(true);
-      console.log("--- INICIANDO PROCESSO DE SALVAMENTO ---");
+async function handleSave() {
+  setLoading(true);
+  console.log("Iniciando transação...");
 
-      // 1. Validação de segurança
-      if (!profileId) {
-        throw new Error("ID do perfil não encontrado. Verifique se você está logado.");
-      }
+  // ETAPA 1: MÍDIA
+  const mediaPayload = {
+    title: query.trim(),
+    category,
+    image_url: imageUrl || null,
+    external_id: selectedMedia?.id?.toString() || null,
+    total_units: Number(totalUnits) || 0,
+  };
 
-      const title = query.trim();
-      if (!title) return alert('Informe um título para a obra.');
+  let mediaId = itemToEdit?.media_id ?? itemToEdit?.medias?.id ?? null;
 
-      // 2. Definir se vamos criar ou editar na tabela 'medias'
-      let mediaId = itemToEdit?.media_id ?? itemToEdit?.medias?.id ?? null;
+  if (!mediaId) {
+    const { data: mData, error: mError } = await supabase
+      .from('medias')
+      .insert(mediaPayload)
+      .select('id')
+      .single();
 
-      const mediaPayload = {
-        title,
-        category,
-        image_url: imageUrl || null,
-        external_id: selectedMedia?.id?.toString() ?? itemToEdit?.medias?.external_id ?? null,
-        total_units: Number(totalUnits) || 0,
-      };
-
-      if (mediaId) {
-        console.log("Atualizando mídia existente (ID:", mediaId, ")...");
-        const { error: mUpError } = await supabase
-          .from('medias')
-          .update(mediaPayload)
-          .eq('id', mediaId);
-
-        if (mUpError) throw mUpError;
-      } else {
-        console.log("Inserindo nova mídia no banco...");
-        const { data: createdMedia, error: mError } = await supabase
-          .from('medias')
-          .insert(mediaPayload)
-          .select(); // Buscamos o objeto completo para pegar o ID gerado
-
-        if (mError) throw mError;
-        if (!createdMedia || createdMedia.length === 0) {
-          throw new Error("Mídia criada, mas o banco não retornou o ID. Verifique o RLS da tabela 'medias'.");
-        }
-
-        mediaId = createdMedia[0].id;
-        console.log("Novo MediaID criado:", mediaId);
-      }
-
-      // 3. Salvar na tabela de relacionamento 'profile_media'
-      const listPayload = {
-        profile_id: profileId,
-        media_id: mediaId,
-        status,
-        current_progress: Number(progress) || 0,
-        season: Number(season) || 1,
-        // Garante que a nota enviada esteja sempre entre 0 e 5
-        rating: Math.min(Math.max(Number(rating) || 0, 0), 5),
-        notes: notes || '',
-        is_favorite: isFavorite,
-      };
-
-      console.log("Salvando progresso do usuário...", listPayload);
-
-      const { error: lError } = itemToEdit?.id
-        ? await supabase.from('profile_media').update(listPayload).eq('id', itemToEdit.id)
-        : await supabase.from('profile_media').insert(listPayload);
-
-      if (lError) {
-        console.error("Erro na tabela profile_media:", lError);
-        throw lError;
-      }
-
-      console.log("--- SALVO COM SUCESSO ---");
-
-      onClose();
-      // Recarrega para refletir as mudanças na UI
-      window.location.reload();
-
-    } catch (error: any) {
-      console.error("ERRO COMPLETO NO PROCESSO:", error);
-      // O código do erro ajuda a identificar se é permissão (RLS) ou erro de banco
-      const errorMsg = error.code ? `Erro ${error.code}: ${error.message}` : error.message;
-      alert('Erro ao salvar: ' + errorMsg);
-    } finally {
+    if (mError) {
+      console.error("Erro na tabela medias:", mError);
+      alert(`ERRO MEDIAS: ${mError.message} (Código: ${mError.code})`);
       setLoading(false);
+      return;
     }
+    mediaId = mData.id;
+  } else {
+    await supabase.from('medias').update(mediaPayload).eq('id', mediaId);
   }
+
+  // ETAPA 2: VÍNCULO COM PERFIL
+  const listPayload = {
+    profile_id: profileId,
+    media_id: mediaId,
+    status,
+    current_progress: Number(progress) || 0,
+    season: Number(season) || 1,
+    rating: Math.min(Math.max(Number(rating) || 0, 0), 5),
+    notes,
+    is_favorite: isFavorite,
+  };
+
+  const { error: lError } = itemToEdit?.id
+    ? await supabase.from('profile_media').update(listPayload).eq('id', itemToEdit.id)
+    : await supabase.from('profile_media').insert(listPayload);
+
+  if (lError) {
+    console.error("Erro na tabela profile_media:", lError);
+    alert(`ERRO LISTA: ${lError.message} (Código: ${lError.code})`);
+    setLoading(false);
+    return;
+  }
+
+  console.log("Sucesso absoluto!");
+  onClose();
+  window.location.reload();
+}
   return (
     <div className="fixed inset-0 bg-slate-950/90 z-[100] flex flex-col justify-end backdrop-blur-md" onClick={handleOutsideClick}>
       <div className="w-12 h-1.5 bg-slate-800 rounded-full mx-auto mb-4" />
