@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 export default function AddMediaModal({ profileId, onClose, itemToEdit = null }: { profileId: string; onClose: () => void; itemToEdit?: any | null }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modalContentRef = useRef<HTMLDivElement>(null);
-  
+
   // --- ESTADOS ---
   const [query, setQuery] = useState(itemToEdit?.medias?.title || '');
   const [category, setCategory] = useState(itemToEdit?.medias?.category || 'manga');
@@ -36,7 +36,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     }
   };
 
-  // --- BUSCA REATIVA (TMDB / GOOGLE BOOKS) ---
+  // --- BUSCA REATIVA ---
   useEffect(() => {
     const delay = setTimeout(() => {
       if (query.length > 2 && !selectedMedia && category !== 'fanfic' && !itemToEdit) handleSearch(query);
@@ -83,12 +83,9 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
       const token = process.env.NEXT_PUBLIC_TMDB_TOKEN;
       const seriesResp = await fetch(`https://api.themoviedb.org/3/tv/${externalId}?language=pt-BR`, { headers: { Authorization: `Bearer ${token}` } });
       const seriesData = await seriesResp.json();
-      
       setIsAiring(seriesData.status === 'Returning Series' || seriesData.status === 'In Production');
-
       const seasonResp = await fetch(`https://api.themoviedb.org/3/tv/${externalId}/season/${seasonNum}?language=pt-BR`, { headers: { Authorization: `Bearer ${token}` } });
       const seasonData = await seasonResp.json();
-      
       if (seasonData.episodes) {
         const today = new Date();
         const aired = seasonData.episodes.filter((ep: any) => !ep.air_date || new Date(ep.air_date) <= today);
@@ -97,27 +94,27 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     } catch (e) { console.error("Erro API TMDB:", e); }
   }
 
-  // --- UPLOAD ---
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     try {
       if (!e.target.files || e.target.files.length === 0) return;
       setUploading(true);
       const file = e.target.files[0];
       const fileName = `${Date.now()}.${file.name.split('.').pop()}`;
-      const filePath = `${fileName}`; 
-      const { error: uploadError } = await supabase.storage.from('media-covers').upload(filePath, file);
+      const { error: uploadError } = await supabase.storage.from('media-covers').upload(fileName, file);
       if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from('media-covers').getPublicUrl(filePath);
+      const { data } = supabase.storage.from('media-covers').getPublicUrl(fileName);
       setImageUrl(data.publicUrl);
       setSelectedMedia(null);
     } catch (error: any) { alert('Erro no upload: ' + error.message); }
     finally { setUploading(false); }
   }
 
-  // --- SALVAR ---
+  // --- SALVAR (VERSÃO CORRIGIDA) ---
   async function handleSave() {
     try {
       setLoading(true);
+      console.log("Iniciando salvamento...");
+
       const title = query.trim();
       if (!title) return alert('Informe um título.');
 
@@ -131,14 +128,23 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
         total_units: Number(totalUnits) || 0,
       };
 
+      // ETAPA 1: Garantir que a mídia existe na tabela 'medias'
       if (mediaId) {
+        console.log("Atualizando mídia existente:", mediaId);
         await supabase.from('medias').update(mediaPayload).eq('id', mediaId);
       } else {
-        const { data: createdMedia, error: mError } = await supabase.from('medias').insert(mediaPayload).select('id').single();
+        console.log("Inserindo nova mídia...");
+        const { data: createdMedia, error: mError } = await supabase
+          .from('medias')
+          .insert(mediaPayload)
+          .select('id');
+
         if (mError) throw mError;
-        mediaId = createdMedia.id;
+        mediaId = createdMedia[0].id;
+        console.log("Nova mídia criada com ID:", mediaId);
       }
 
+      // ETAPA 2: Salvar o progresso na tabela 'profile_media'
       const listPayload = {
         profile_id: profileId,
         media_id: mediaId,
@@ -150,23 +156,29 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
         is_favorite: isFavorite,
       };
 
-      const { error: lError } = itemToEdit?.id 
+      console.log("Salvando na profile_media...", listPayload);
+
+      const { error: lError } = itemToEdit?.id
         ? await supabase.from('profile_media').update(listPayload).eq('id', itemToEdit.id)
         : await supabase.from('profile_media').insert(listPayload);
 
       if (lError) throw lError;
+
+      console.log("Sucesso!");
       onClose();
-    } catch (error: any) { alert('Erro ao salvar: ' + error.message); }
-    finally { setLoading(false); }
+    } catch (error: any) {
+      console.error("ERRO COMPLETO:", error);
+      alert('Erro ao salvar: ' + (error.message || 'Erro desconhecido'));
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="fixed inset-0 bg-slate-950/90 z-[100] flex flex-col justify-end backdrop-blur-md" onClick={handleOutsideClick}>
       <div className="w-12 h-1.5 bg-slate-800 rounded-full mx-auto mb-4" />
-      
       <div ref={modalContentRef} className="bg-slate-900 w-full rounded-t-[3rem] p-8 pb-12 space-y-6 max-h-[94vh] overflow-y-auto no-scrollbar shadow-2xl border-t border-slate-800 relative" onClick={(e) => e.stopPropagation()}>
-        
-        {/* HEADER */}
+
         <div className="flex justify-between items-start gap-4">
           <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
             <img src={imageUrl || 'https://via.placeholder.com/150x220?text=Capa'} className={`w-20 h-28 object-cover rounded-2xl border border-white/5 shadow-xl ${uploading ? 'opacity-50 animate-pulse' : ''}`} alt="" />
@@ -184,7 +196,6 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           </button>
         </div>
 
-        {/* CATEGORIAS */}
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
           {['book', 'manga', 'anime', 'movie', 'tv', 'fanfic'].map(cat => (
             <button key={cat} onClick={() => { setCategory(cat); setSelectedMedia(null); }} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase border whitespace-nowrap transition-all ${category === cat ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>
@@ -193,13 +204,12 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           ))}
         </div>
 
-        {/* BUSCA */}
         <div className="relative z-[110]">
           <input className="w-full bg-slate-800/50 p-5 rounded-2xl outline-none border border-slate-800 text-white font-bold" placeholder="Pesquisar..." value={query} onChange={(e) => { setQuery(e.target.value); setSelectedMedia(null); }} />
           {showSuggestions && suggestions.length > 0 && (
             <div className="absolute top-[110%] left-0 w-full bg-slate-800 rounded-[2rem] overflow-hidden shadow-2xl border border-white/5 z-[120] max-h-60 overflow-y-auto no-scrollbar">
               {suggestions.map((s: any) => (
-                <button key={s.id} onClick={() => { setQuery(s.title); setImageUrl(s.image); setShowSuggestions(false); setSelectedMedia(s); if(!isMovie) setTotalUnits(s.total || 0); }} className="w-full p-4 flex items-center gap-4 hover:bg-blue-600/20 border-b border-white/5 text-left text-white">
+                <button key={s.id} onClick={() => { setQuery(s.title); setImageUrl(s.image); setShowSuggestions(false); setSelectedMedia(s); if (!isMovie) setTotalUnits(s.total || 0); }} className="w-full p-4 flex items-center gap-4 hover:bg-blue-600/20 border-b border-white/5 text-left text-white">
                   <img src={s.image || 'https://via.placeholder.com/40x60'} className="w-10 h-14 object-cover rounded-lg" alt="" />
                   <span className="text-sm font-bold truncate">{s.title}</span>
                 </button>
@@ -208,7 +218,6 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           )}
         </div>
 
-        {/* STATUS */}
         <div className="grid grid-cols-3 gap-2">
           {['Planejado', isVideo ? 'Assistindo' : 'Lendo', 'Concluído'].map(s => (
             <button key={s} onClick={() => setStatus(s)} className={`p-3 rounded-2xl text-[9px] font-black uppercase border transition-all ${status === s ? 'bg-slate-100 border-white text-slate-950' : 'bg-slate-800/40 border-slate-800 text-slate-500'}`}>
@@ -224,22 +233,66 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
               {hasSeasons && (
                 <div className="bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center">
                   <span className="text-[10px] font-black text-slate-500 uppercase mb-2">Temp</span>
-                  <input type="number" className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-full" value={season} min="1" onChange={(e) => setSeason(Number(e.target.value))} />
+                  <input
+                    type="number"
+                    className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-full"
+                    value={season}
+                    min="1"
+                    onChange={(e) => setSeason(Number(e.target.value))}
+                  />
                 </div>
               )}
+
               <div className={`bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center ${!hasSeasons ? 'col-span-1' : ''}`}>
-                <span className="text-[10px] font-black text-slate-500 uppercase mb-2">{labelProgress} Atual</span>
-                <input type="number" className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-full" value={progress} onChange={(e) => setProgress(e.target.value)} />
+                <span className="text-[10px] font-black text-slate-500 uppercase mb-2">
+                  {labelProgress} Atual
+                </span>
+                <div className="flex items-baseline justify-center gap-1">
+                  <input
+                    type="number"
+                    className="bg-transparent text-2xl font-black text-blue-400 text-center outline-none w-20"
+                    value={progress}
+                    onChange={(e) => setProgress(e.target.value)}
+                  />
+                  {/* EXIBIÇÃO DO TOTAL DE EPISÓDIOS/PÁGINAS */}
+                  {totalUnits > 0 && (
+                    <span className="text-slate-600 font-bold text-sm">
+                      / {totalUnits}
+                    </span>
+                  )}
+                </div>
               </div>
             </>
           )}
+
           <div className={`bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center ${isMovie ? 'col-span-2' : ''}`}>
             <span className="text-[10px] font-black text-slate-500 uppercase mb-2">Nota</span>
-            <input type="number" step="0.1" className="bg-transparent text-2xl font-black text-yellow-500 text-center outline-none w-full" value={rating} onChange={(e) => setRating(e.target.value)} />
+            <input
+              type="number"
+              step="0.1"
+              className="bg-transparent text-2xl font-black text-yellow-500 text-center outline-none w-full"
+              value={rating}
+              onChange={(e) => setRating(e.target.value)}
+            />
           </div>
         </div>
 
-        {/* ANOTAÇÕES */}
+        {/* BARRA DE PROGRESSO VISUAL (OPCIONAL, MAS FICA ÓTIMO NO DESIGN) */}
+        {!isMovie && totalUnits > 0 && (
+          <div className="px-2">
+            <div className="flex justify-between text-[9px] font-black uppercase text-slate-500 mb-2 px-1">
+              <span>Progresso Total</span>
+              <span>{Math.round((Number(progress) / totalUnits) * 100)}%</span>
+            </div>
+            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-500 transition-all duration-500"
+                style={{ width: `${Math.min((Number(progress) / totalUnits) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         <textarea className="w-full bg-slate-800/30 p-6 rounded-[2rem] text-sm text-slate-200 outline-none border border-slate-800/50 h-28 resize-none font-medium placeholder:text-slate-700" placeholder="O que achou?" value={notes} onChange={(e) => setNotes(e.target.value)} />
 
         <button onClick={handleSave} disabled={loading || uploading} className="w-full p-6 rounded-[2rem] font-black uppercase text-[11px] bg-blue-600 text-white shadow-xl shadow-blue-600/20 active:scale-95 transition-all disabled:opacity-50">
