@@ -25,7 +25,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
   const hasSeasons = ['tv', 'anime'].includes(category);
   const labelProgress = category === 'manga' ? 'Cap' : category === 'book' ? 'Pág' : 'Ep';
 
-  // Sincronização de busca
+  // Debounce para busca
   useEffect(() => {
     const delay = setTimeout(() => {
       if (query.length > 2 && !selectedMedia && category !== 'fanfic' && !itemToEdit) handleSearch(query);
@@ -34,7 +34,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     return () => clearTimeout(delay);
   }, [query, category]);
 
-  // Reatividade para Temporadas e Lançamentos (Anime e TV)
+  // Reatividade para Temporadas e Lançamentos
   useEffect(() => {
     if (hasSeasons && selectedMedia?.id) {
       updateMediaDetails(selectedMedia.id, season);
@@ -45,7 +45,6 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     try {
       let results = [];
       const token = process.env.NEXT_PUBLIC_TMDB_TOKEN;
-      
       if (category === 'book') {
         const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5`);
         const json = await resp.json();
@@ -70,8 +69,6 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
   async function updateMediaDetails(externalId: string | number, seasonNum: number) {
     try {
       const token = process.env.NEXT_PUBLIC_TMDB_TOKEN;
-      
-      // Verifica status da obra (se está em lançamento)
       const seriesResp = await fetch(`https://api.themoviedb.org/3/tv/${externalId}?language=pt-BR`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -79,19 +76,16 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
       const airing = seriesData.status === 'Returning Series' || seriesData.status === 'In Production';
       setIsAiring(airing);
 
-      // Busca episódios da temporada selecionada
       const seasonResp = await fetch(`https://api.themoviedb.org/3/tv/${externalId}/season/${seasonNum}?language=pt-BR`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const seasonData = await seasonResp.json();
-
       if (seasonData.episodes) {
         const today = new Date();
-        // Se estiver lançando, filtra apenas episódios com air_date no passado/hoje
         const airedEpisodes = seasonData.episodes.filter((ep: any) => !ep.air_date || new Date(ep.air_date) <= today);
         setTotalUnits(airing ? airedEpisodes.length : seasonData.episodes.length);
       }
-    } catch (e) { console.error("Erro ao atualizar unidades:", e); }
+    } catch (e) { console.error("Erro ao sincronizar TMDB:", e); }
   }
 
   async function handleSelectSuggestion(s: any) {
@@ -99,13 +93,8 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     setImageUrl(s.image);
     setShowSuggestions(false);
     setSelectedMedia(s);
-
-    if (hasSeasons) {
-      setSeason(1);
-      updateMediaDetails(s.id, 1);
-    } else {
-      setTotalUnits(s.total || 0);
-    }
+    if (hasSeasons) { setSeason(1); updateMediaDetails(s.id, 1); }
+    else { setTotalUnits(s.total || 0); }
   }
 
   async function handleSave() {
@@ -114,29 +103,48 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
     try {
       let mediaId = itemToEdit?.media_id;
       if (!itemToEdit) {
-        const { data: media } = await supabase.from('medias').insert([{
+        const { data: media, error: mError } = await supabase.from('medias').insert([{
           title: selectedMedia?.title || query,
           category, image_url: selectedMedia?.image || imageUrl, 
-          total_units: totalUnits, is_custom: !selectedMedia,
+          total_units: Number(totalUnits), is_custom: !selectedMedia,
           external_id: selectedMedia?.id?.toString()
         }]).select().single();
+        if (mError) throw mError;
         mediaId = media.id;
       }
       const logData = { profile_id: profileId, media_id: mediaId, status, current_progress: Number(progress), rating: Number(rating), season: Number(season), notes, is_favorite: isFavorite };
-      
-      if (itemToEdit) await supabase.from('user_logs').update(logData).eq('id', itemToEdit.id);
-      else await supabase.from('user_logs').insert([logData]);
-      
+      const { error: lError } = itemToEdit 
+        ? await supabase.from('user_logs').update(logData).eq('id', itemToEdit.id)
+        : await supabase.from('user_logs').insert([logData]);
+      if (lError) throw lError;
       onClose();
-    } catch (e) { console.error(e); }
+    } catch (e: any) { 
+        console.error("Erro ao salvar:", e.message);
+        alert("Erro ao salvar: " + e.message);
+    }
+    setLoading(false);
+  }
+
+  async function handleDelete() {
+    if (!itemToEdit) return;
+    if (!confirm("Tem certeza que deseja remover esta obra da sua lista?")) return;
+    
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('user_logs').delete().eq('id', itemToEdit.id);
+      if (error) throw error;
+      onClose();
+    } catch (e: any) {
+      console.error("Erro ao excluir:", e.message);
+      alert("Erro ao excluir: " + e.message);
+    }
     setLoading(false);
   }
 
   return (
     <div className="fixed inset-0 bg-slate-950/90 z-[100] flex flex-col justify-end backdrop-blur-md">
       <div className="w-12 h-1.5 bg-slate-800 rounded-full mx-auto mb-4" onClick={onClose} />
-      
-      <div className="bg-slate-900 w-full rounded-t-[3rem] p-8 pb-12 space-y-6 max-h-[94vh] overflow-y-auto no-scrollbar shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border-t border-slate-800 relative">
+      <div className="bg-slate-900 w-full rounded-t-[3rem] p-8 pb-12 space-y-6 max-h-[94vh] overflow-y-auto no-scrollbar shadow-2xl border-t border-slate-800 relative">
         
         {/* HEADER */}
         <div className="flex justify-between items-center">
@@ -146,15 +154,21 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
               <span className="text-blue-500 text-[10px] font-black uppercase tracking-widest">{category}</span>
               {isAiring && (
                 <span className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[9px] font-black uppercase rounded-full">
-                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                  Em Lançamento
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" /> lançando
                 </span>
               )}
             </div>
           </div>
-          <button onClick={() => setIsFavorite(!isFavorite)} className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isFavorite ? 'bg-red-500/10 text-red-500' : 'bg-slate-800 text-slate-500'}`}>
-            {isFavorite ? '❤️' : '🤍'}
-          </button>
+          <div className="flex gap-2">
+            {itemToEdit && (
+              <button onClick={handleDelete} className="w-12 h-12 rounded-2xl flex items-center justify-center bg-red-500/10 text-red-500 border border-red-500/20 active:scale-90 transition-all">
+                🗑️
+              </button>
+            )}
+            <button onClick={() => setIsFavorite(!isFavorite)} className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isFavorite ? 'bg-pink-500/10 text-pink-500' : 'bg-slate-800 text-slate-500'}`}>
+              {isFavorite ? '❤️' : '🤍'}
+            </button>
+          </div>
         </div>
 
         {/* SELETOR DE CATEGORIA */}
@@ -166,24 +180,18 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           ))}
         </div>
 
-        {/* BUSCA COM DROPDOWN */}
+        {/* BUSCA */}
         <div className="relative z-[110]">
           <input className="w-full bg-slate-800/50 p-5 rounded-2xl outline-none border border-slate-800 focus:border-blue-500/50 transition-all font-bold text-white placeholder:text-slate-600" placeholder="Pesquisar título..." value={query} onChange={(e) => { setQuery(e.target.value); setSelectedMedia(null); }} />
           {showSuggestions && suggestions.length > 0 && (
-            <>
-              <div className="fixed inset-0 z-[-1]" onClick={() => setShowSuggestions(false)} />
-              <div className="absolute top-[110%] left-0 w-full bg-slate-800/95 backdrop-blur-xl rounded-[2rem] overflow-hidden shadow-2xl border border-white/5 animate-in fade-in zoom-in-95 duration-200 max-h-64 overflow-y-auto no-scrollbar">
-                {suggestions.map((s: any) => (
-                  <button key={s.id} onClick={() => handleSelectSuggestion(s)} className="w-full p-4 flex items-center gap-4 hover:bg-blue-600/20 active:bg-blue-600/40 border-b border-white/5 last:border-0 text-left transition-colors">
-                    <img src={s.image || 'https://via.placeholder.com/40x60'} className="w-12 h-16 object-cover rounded-xl shadow-md border border-white/10" alt="" />
-                    <div className="flex flex-col overflow-hidden">
-                      <span className="text-sm font-bold truncate text-slate-100">{s.title}</span>
-                      <span className="text-[9px] font-black text-blue-500 uppercase mt-1">Selecionar</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </>
+            <div className="absolute top-[110%] left-0 w-full bg-slate-800 rounded-[2rem] overflow-hidden shadow-2xl border border-white/5 z-[120] max-h-64 overflow-y-auto no-scrollbar">
+              {suggestions.map((s: any) => (
+                <button key={s.id} onClick={() => handleSelectSuggestion(s)} className="w-full p-4 flex items-center gap-4 hover:bg-blue-600/20 border-b border-white/5 text-left">
+                  <img src={s.image || 'https://via.placeholder.com/40x60'} className="w-12 h-16 object-cover rounded-xl shadow-md" alt="" />
+                  <span className="text-sm font-bold text-slate-100 truncate">{s.title}</span>
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
@@ -196,7 +204,7 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
           ))}
         </div>
 
-        {/* PROGRESSO DINÂMICO */}
+        {/* PROGRESSO */}
         <div className="grid grid-cols-2 gap-4">
           {hasSeasons && (
             <div className="bg-slate-800/30 p-5 rounded-[2rem] border border-slate-800/50 flex flex-col items-center">
@@ -217,20 +225,20 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
         {/* NOTA */}
         <div className="bg-blue-600/5 border border-blue-500/10 p-5 rounded-[2rem] flex justify-between items-center">
           <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Sua Nota</span>
-          <div className="flex items-center gap-3 bg-slate-800 p-2 rounded-xl border border-slate-700">
+          <div className="flex items-center gap-3">
             <span className="text-yellow-500 text-xl font-bold">★</span>
-            <input type="number" step="0.1" min="0" max="5" className="bg-transparent w-16 text-center font-black text-yellow-500 outline-none" value={rating} onChange={(e) => setRating(e.target.value)} />
+            <input type="number" step="0.1" min="0" max="5" className="bg-slate-800 p-3 w-20 rounded-xl text-center font-black text-yellow-500 outline-none border border-slate-700" value={rating} onChange={(e) => setRating(e.target.value)} />
           </div>
         </div>
 
         {/* ANOTAÇÕES */}
         <textarea className="w-full bg-slate-800/30 p-6 rounded-[2rem] text-sm text-slate-200 outline-none border border-slate-800/50 h-28 resize-none font-medium placeholder:text-slate-700" placeholder="Escreva suas impressões..." value={notes} onChange={(e) => setNotes(e.target.value)} />
 
-        {/* AÇÕES */}
+        {/* BOTÕES */}
         <div className="flex gap-3">
           <button onClick={onClose} className="flex-1 p-5 rounded-2xl font-black uppercase text-[11px] text-slate-500 bg-slate-800/50 active:scale-95 transition-transform">Voltar</button>
           <button onClick={handleSave} disabled={loading} className="flex-[2] p-5 rounded-2xl font-black uppercase text-[11px] bg-blue-600 text-white shadow-lg active:scale-95 transition-transform disabled:opacity-50">
-            {loading ? 'Sincronizando...' : itemToEdit ? 'Atualizar' : 'Salvar na Lista'}
+            {loading ? '...' : itemToEdit ? 'Atualizar' : 'Salvar'}
           </button>
         </div>
       </div>
