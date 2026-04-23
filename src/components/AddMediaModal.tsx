@@ -91,46 +91,108 @@ export default function AddMediaModal({ profileId, onClose, itemToEdit = null }:
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    try {
-      if (!e.target.files || e.target.files.length === 0) return;
-      setUploading(true);
-      const file = e.target.files[0];
-      const fileName = `${Date.now()}.${file.name.split('.').pop()}`;
-      const filePath = `${profileId}/${fileName}`;
-      const { error: uploadError } = await supabase.storage.from('media-covers').upload(filePath, file);
-      if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from('media-covers').getPublicUrl(filePath);
-      setImageUrl(data.publicUrl);
+  try {
+    if (!e.target.files || e.target.files.length === 0) return;
+    setUploading(true);
+    
+    const file = e.target.files[0];
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Date.now()}.${fileExt}`;
+    // Se o bucket media-covers não tiver pastas criadas, tente sem o ${profileId}/ primeiro
+    const filePath = `${fileName}`; 
+
+    const { error: uploadError } = await supabase.storage
+      .from('media-covers')
+      .upload(filePath, file);
+
+    if (uploadError) throw uploadError;
+
+    const { data } = supabase.storage
+      .from('media-covers')
+      .getPublicUrl(filePath);
+
+    if (data?.publicUrl) {
+      console.log("URL gerada:", data.publicUrl);
+      setImageUrl(data.publicUrl); // Atualiza o estado para o preview
       setSelectedMedia(null);
-    } catch (error: any) { alert('Erro no upload: ' + error.message); }
-    finally { setUploading(false); }
+    }
+  } catch (error: any) {
+    alert('Erro no upload: ' + error.message);
+  } finally {
+    setUploading(false);
   }
+}
 
   async function handleSave() {
-    if (!query) return;
-    setLoading(true);
     try {
-      let mediaId = itemToEdit?.media_id;
-      if (!itemToEdit) {
-        const { data: media, error: mError } = await supabase.from('medias').insert([{
-          title: selectedMedia?.title || query, category, image_url: imageUrl, 
-          total_units: isMovie ? 1 : Number(totalUnits), is_custom: !selectedMedia, external_id: selectedMedia?.id?.toString()
-        }]).select().single();
-        if (mError) throw mError;
-        mediaId = media.id;
+      setLoading(true);
+
+      const title = query.trim();
+      if (!title) {
+        alert('Informe um título.');
+        return;
       }
-      const logData = { 
-        profile_id: profileId, media_id: mediaId, status, 
-        current_progress: isMovie ? (status === 'Concluído' ? 1 : 0) : Number(progress), 
-        rating: Number(rating), season: isMovie ? 1 : Number(season), notes, is_favorite: isFavorite 
+
+      let mediaId = itemToEdit?.media_id ?? itemToEdit?.medias?.id ?? null;
+
+      const mediaPayload = {
+        title,
+        category,
+        image_url: imageUrl || null,
+        external_id: selectedMedia?.id ?? itemToEdit?.medias?.external_id ?? null,
+        total_units: Number(totalUnits) || 0,
       };
-      const { error: lError } = itemToEdit 
-        ? await supabase.from('user_logs').update(logData).eq('id', itemToEdit.id)
-        : await supabase.from('user_logs').insert([logData]);
-      if (lError) throw lError;
+
+      if (mediaId) {
+        const { error: mediaUpdateError } = await supabase
+          .from('medias')
+          .update(mediaPayload)
+          .eq('id', mediaId);
+
+        if (mediaUpdateError) throw mediaUpdateError;
+      } else {
+        const { data: createdMedia, error: mediaInsertError } = await supabase
+          .from('medias')
+          .insert(mediaPayload)
+          .select('id')
+          .single();
+
+        if (mediaInsertError) throw mediaInsertError;
+        mediaId = createdMedia.id;
+      }
+
+      const listPayload = {
+        profile_id: profileId,
+        media_id: mediaId,
+        status,
+        current_progress: Number(progress) || 0,
+        season: Number(season) || 1,
+        rating: Number(rating) || 0,
+        notes,
+        is_favorite: isFavorite,
+      };
+
+      if (itemToEdit?.id) {
+        const { error: updateError } = await supabase
+          .from('profile_media')
+          .update(listPayload)
+          .eq('id', itemToEdit.id);
+
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await supabase
+          .from('profile_media')
+          .insert(listPayload);
+
+        if (insertError) throw insertError;
+      }
+
       onClose();
-    } catch (e: any) { alert("Erro ao salvar: " + e.message); }
-    setLoading(false);
+    } catch (error: any) {
+      alert('Erro ao salvar: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
